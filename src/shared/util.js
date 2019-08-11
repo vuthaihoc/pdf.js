@@ -86,6 +86,29 @@ const AnnotationType = {
   REDACT: 26,
 };
 
+const AnnotationStateModelType = {
+  MARKED: 'Marked',
+  REVIEW: 'Review',
+};
+
+const AnnotationMarkedState = {
+  MARKED: 'Marked',
+  UNMARKED: 'Unmarked',
+};
+
+const AnnotationReviewState = {
+  ACCEPTED: 'Accepted',
+  REJECTED: 'Rejected',
+  CANCELLED: 'Cancelled',
+  COMPLETED: 'Completed',
+  NONE: 'None',
+};
+
+const AnnotationReplyType = {
+  GROUP: 'Group',
+  REPLY: 'R',
+};
+
 const AnnotationFlag = {
   INVISIBLE: 0x01,
   HIDDEN: 0x02,
@@ -130,30 +153,30 @@ const AnnotationBorderStyleType = {
 };
 
 const StreamType = {
-  UNKNOWN: 0,
-  FLATE: 1,
-  LZW: 2,
-  DCT: 3,
-  JPX: 4,
-  JBIG: 5,
-  A85: 6,
-  AHX: 7,
-  CCF: 8,
-  RL: 9,
+  UNKNOWN: 'UNKNOWN',
+  FLATE: 'FLATE',
+  LZW: 'LZW',
+  DCT: 'DCT',
+  JPX: 'JPX',
+  JBIG: 'JBIG',
+  A85: 'A85',
+  AHX: 'AHX',
+  CCF: 'CCF',
+  RLX: 'RLX', // PDF short name is 'RL', but telemetry requires three chars.
 };
 
 const FontType = {
-  UNKNOWN: 0,
-  TYPE1: 1,
-  TYPE1C: 2,
-  CIDFONTTYPE0: 3,
-  CIDFONTTYPE0C: 4,
-  TRUETYPE: 5,
-  CIDFONTTYPE2: 6,
-  TYPE3: 7,
-  OPENTYPE: 8,
-  TYPE0: 9,
-  MMTYPE1: 10,
+  UNKNOWN: 'UNKNOWN',
+  TYPE1: 'TYPE1',
+  TYPE1C: 'TYPE1C',
+  CIDFONTTYPE0: 'CIDFONTTYPE0',
+  CIDFONTTYPE0C: 'CIDFONTTYPE0C',
+  TRUETYPE: 'TRUETYPE',
+  CIDFONTTYPE2: 'CIDFONTTYPE2',
+  TYPE3: 'TYPE3',
+  OPENTYPE: 'OPENTYPE',
+  TYPE0: 'TYPE0',
+  MMTYPE1: 'MMTYPE1',
 };
 
 const VerbosityLevel = {
@@ -725,7 +748,7 @@ var Util = (function UtilClosure() {
   // Returns a rectangle [x1, y1, x2, y2] corresponding to the
   // intersection of rect1 and rect2. If no intersection, returns 'false'
   // The rectangle coordinates of rect1, rect2 should be [x1, y1, x2, y2]
-  Util.intersect = function Util_intersect(rect1, rect2) {
+  Util.intersect = function Util_intersect(rect1, rect2, skipEmpty = false) {
     function compare(a, b) {
       return a - b;
     }
@@ -745,7 +768,7 @@ var Util = (function UtilClosure() {
       result[0] = orderedX[1];
       result[2] = orderedX[2];
     } else {
-      return false;
+      return null;
     }
 
     // Y: first and second points belong to different rectangles?
@@ -755,9 +778,13 @@ var Util = (function UtilClosure() {
       result[1] = orderedY[1];
       result[3] = orderedY[2];
     } else {
-      return false;
+      return null;
     }
 
+    if (skipEmpty &&
+        ((result[2] - result[0]) === 0 || (result[3] - result[1]) === 0)) {
+      return null;
+    }
     return result;
   };
 
@@ -910,6 +937,10 @@ export {
   AnnotationBorderStyleType,
   AnnotationFieldFlag,
   AnnotationFlag,
+  AnnotationMarkedState,
+  AnnotationReplyType,
+  AnnotationReviewState,
+  AnnotationStateModelType,
   AnnotationType,
   FontType,
   ImageKind,

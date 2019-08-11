@@ -20,7 +20,7 @@ import {
   warn
 } from '../shared/util';
 import {
-  clearPrimitiveCaches, Dict, isCmd, isDict, isName, isRef, isRefsEqual,
+  clearPrimitiveCaches, Cmd, Dict, isCmd, isDict, isName, isRef, isRefsEqual,
   isStream, Ref, RefSet, RefSetCache
 } from './primitives';
 import { Lexer, Parser } from './parser';
@@ -1046,8 +1046,8 @@ var XRef = (function XRefClosure() {
     // prepare the XRef cache
     this.cache = [];
     this.stats = {
-      streamTypes: [],
-      fontTypes: [],
+      streamTypes: Object.create(null),
+      fontTypes: Object.create(null),
     };
   }
 
@@ -1200,10 +1200,15 @@ var XRef = (function XRefClosure() {
           entry.gen = parser.getObj();
           var type = parser.getObj();
 
-          if (isCmd(type, 'f')) {
-            entry.free = true;
-          } else if (isCmd(type, 'n')) {
-            entry.uncompressed = true;
+          if (type instanceof Cmd) {
+            switch (type.cmd) {
+              case 'f':
+                entry.free = true;
+                break;
+              case 'n':
+                entry.uncompressed = true;
+                break;
+            }
           }
 
           // Validate entry obj
@@ -1477,8 +1482,12 @@ var XRef = (function XRefClosure() {
       let trailerDict;
       for (i = 0, ii = trailers.length; i < ii; ++i) {
         stream.pos = trailers[i];
-        var parser = new Parser(new Lexer(stream), /* allowStreams = */ true,
-                                /* xref = */ this, /* recoveryMode = */ true);
+        const parser = new Parser({
+          lexer: new Lexer(stream),
+          xref: this,
+          allowStreams: true,
+          recoveryMode: true,
+        });
         var obj = parser.getObj();
         if (!isCmd(obj, 'trailer')) {
           continue;
@@ -1536,7 +1545,11 @@ var XRef = (function XRefClosure() {
 
           stream.pos = startXRef + stream.start;
 
-          var parser = new Parser(new Lexer(stream), true, this);
+          const parser = new Parser({
+            lexer: new Lexer(stream),
+            xref: this,
+            allowStreams: true,
+          });
           var obj = parser.getObj();
           var dict;
 
@@ -1662,7 +1675,11 @@ var XRef = (function XRefClosure() {
       }
       var stream = this.stream.makeSubStream(xrefEntry.offset +
                                              this.stream.start);
-      var parser = new Parser(new Lexer(stream), true, this);
+      const parser = new Parser({
+        lexer: new Lexer(stream),
+        xref: this,
+        allowStreams: true,
+      });
       var obj1 = parser.getObj();
       var obj2 = parser.getObj();
       var obj3 = parser.getObj();
@@ -1673,7 +1690,7 @@ var XRef = (function XRefClosure() {
       if (!Number.isInteger(obj2)) {
         obj2 = parseInt(obj2, 10);
       }
-      if (obj1 !== num || obj2 !== gen || !isCmd(obj3)) {
+      if (obj1 !== num || obj2 !== gen || !(obj3 instanceof Cmd)) {
         throw new XRefEntryException(`Bad (uncompressed) XRef entry: ${ref}`);
       }
       if (obj3.cmd !== 'obj') {
@@ -1709,8 +1726,11 @@ var XRef = (function XRefClosure() {
         throw new FormatError(
           'invalid first and n parameters for ObjStm stream');
       }
-      var parser = new Parser(new Lexer(stream), false, this);
-      parser.allowStreams = true;
+      const parser = new Parser({
+        lexer: new Lexer(stream),
+        xref: this,
+        allowStreams: true,
+      });
       var i, entries = [], num, nums = [];
       // read the object numbers to populate cache
       for (i = 0; i < n; ++i) {

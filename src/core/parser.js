@@ -51,10 +51,10 @@ function computeAdler32(bytes) {
 }
 
 class Parser {
-  constructor(lexer, allowStreams, xref, recoveryMode = false) {
+  constructor({ lexer, xref, allowStreams = false, recoveryMode = false, }) {
     this.lexer = lexer;
-    this.allowStreams = allowStreams;
     this.xref = xref;
+    this.allowStreams = allowStreams;
     this.recoveryMode = recoveryMode;
 
     this.imageCache = Object.create(null);
@@ -67,7 +67,7 @@ class Parser {
   }
 
   shift() {
-    if (isCmd(this.buf2, 'ID')) {
+    if ((this.buf2 instanceof Cmd) && this.buf2.cmd === 'ID') {
       this.buf1 = this.buf2;
       this.buf2 = null;
     } else {
@@ -696,7 +696,7 @@ class Parser {
         return new CCITTFaxStream(stream, maybeLength, params);
       }
       if (name === 'RunLengthDecode' || name === 'RL') {
-        xrefStreamStats[StreamType.RL] = true;
+        xrefStreamStats[StreamType.RLX] = true;
         return new RunLengthStream(stream, maybeLength);
       }
       if (name === 'JBIG2Decode') {
@@ -748,7 +748,7 @@ function toHexDigit(ch) {
 }
 
 class Lexer {
-  constructor(stream, knownCommands) {
+  constructor(stream, knownCommands = null) {
     this.stream = stream;
     this.nextChar();
 
@@ -1202,7 +1202,10 @@ class Linearization {
       throw new Error('Hint array in the linearization dictionary is invalid.');
     }
 
-    const parser = new Parser(new Lexer(stream), false, null);
+    const parser = new Parser({
+      lexer: new Lexer(stream),
+      xref: null,
+    });
     const obj1 = parser.getObj();
     const obj2 = parser.getObj();
     const obj3 = parser.getObj();

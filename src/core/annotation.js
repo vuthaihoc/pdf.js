@@ -16,8 +16,8 @@
 
 import {
   AnnotationBorderStyleType, AnnotationFieldFlag, AnnotationFlag,
-  AnnotationType, assert, isString, OPS, stringToBytes, stringToPDFString, Util,
-  warn
+  AnnotationReplyType, AnnotationType, assert, isString, OPS, stringToBytes,
+  stringToPDFString, Util, warn
 } from '../shared/util';
 import { Catalog, FileSpec, ObjectLoader } from './obj';
 import { Dict, isDict, isName, isRef, isStream } from './primitives';
@@ -144,6 +144,39 @@ class AnnotationFactory {
         return new Annotation(parameters);
     }
   }
+}
+
+function getQuadPoints(dict, rect) {
+  if (!dict.has('QuadPoints')) {
+    return null;
+  }
+
+  // The region is described as a number of quadrilaterals.
+  // Each quadrilateral must consist of eight coordinates.
+  const quadPoints = dict.getArray('QuadPoints');
+  if (!Array.isArray(quadPoints) || quadPoints.length % 8 > 0) {
+    return null;
+  }
+
+  const quadPointsLists = [];
+  for (let i = 0, ii = quadPoints.length / 8; i < ii; i++) {
+    // Each series of eight numbers represents the coordinates for one
+    // quadrilateral in the order [x1, y1, x2, y2, x3, y3, x4, y4].
+    // Convert this to an array of objects with x and y coordinates.
+    quadPointsLists.push([]);
+    for (let j = i * 8, jj = (i * 8) + 8; j < jj; j += 2) {
+      const x = quadPoints[j];
+      const y = quadPoints[j + 1];
+
+      // The quadpoints should be ignored if any coordinate in the array
+      // lies outside the region specified by the rectangle.
+      if (x < rect[0] || x > rect[2] || y < rect[1] || y > rect[3]) {
+        return null;
+      }
+      quadPointsLists[i].push({ x, y, });
+    }
+  }
+  return quadPointsLists;
 }
 
 function getTransformMatrix(rect, bbox, matrix) {
@@ -643,16 +676,61 @@ class MarkupAnnotation extends Annotation {
     super(parameters);
 
     const dict = parameters.dict;
-    if (!dict.has('C')) {
-      // Fall back to the default background color.
-      this.data.color = null;
+
+    if (dict.has('IRT')) {
+      const rawIRT = dict.getRaw('IRT');
+      this.data.inReplyTo = isRef(rawIRT) ? rawIRT.toString() : null;
+
+      const rt = dict.get('RT');
+      this.data.replyType = isName(rt) ? rt.name : AnnotationReplyType.REPLY;
     }
 
-    this.setCreationDate(dict.get('CreationDate'));
-    this.data.creationDate = this.creationDate;
+    if (this.data.replyType === AnnotationReplyType.GROUP) {
+      // Subordinate annotations in a group should inherit
+      // the group attributes from the primary annotation.
+      const parent = dict.get('IRT');
 
-    this.data.hasPopup = dict.has('Popup');
-    this.data.title = stringToPDFString(dict.get('T') || '');
+      this.data.title = stringToPDFString(parent.get('T') || '');
+
+      this.setContents(parent.get('Contents'));
+      this.data.contents = this.contents;
+
+      if (!parent.has('CreationDate')) {
+        this.data.creationDate = null;
+      } else {
+        this.setCreationDate(parent.get('CreationDate'));
+        this.data.creationDate = this.creationDate;
+      }
+
+      if (!parent.has('M')) {
+        this.data.modificationDate = null;
+      } else {
+        this.setModificationDate(parent.get('M'));
+        this.data.modificationDate = this.modificationDate;
+      }
+
+      this.data.hasPopup = parent.has('Popup');
+
+      if (!parent.has('C')) {
+        // Fall back to the default background color.
+        this.data.color = null;
+      } else {
+        this.setColor(parent.getArray('C'));
+        this.data.color = this.color;
+      }
+    } else {
+      this.data.title = stringToPDFString(dict.get('T') || '');
+
+      this.setCreationDate(dict.get('CreationDate'));
+      this.data.creationDate = this.creationDate;
+
+      this.data.hasPopup = dict.has('Popup');
+
+      if (!dict.has('C')) {
+        // Fall back to the default background color.
+        this.data.color = null;
+      }
+    }
   }
 
   /**
@@ -969,6 +1047,7 @@ class TextAnnotation extends MarkupAnnotation {
 
     super(parameters);
 
+    const dict = parameters.dict;
     this.data.annotationType = AnnotationType.TEXT;
 
     if (this.data.hasAppearance) {
@@ -976,10 +1055,17 @@ class TextAnnotation extends MarkupAnnotation {
     } else {
       this.data.rect[1] = this.data.rect[3] - DEFAULT_ICON_SIZE;
       this.data.rect[2] = this.data.rect[0] + DEFAULT_ICON_SIZE;
-      this.data.name = parameters.dict.has('Name') ?
-                       parameters.dict.get('Name').name : 'Note';
+      this.data.name = dict.has('Name') ?
+                       dict.get('Name').name : 'Note';
     }
 
+    if (dict.has('State')) {
+      this.data.state = dict.get('State') || null;
+      this.data.stateModel = dict.get('StateModel') || null;
+    } else {
+      this.data.state = null;
+      this.data.stateModel = null;
+    }
   }
 }
 
@@ -988,6 +1074,11 @@ class LinkAnnotation extends Annotation {
     super(params);
 
     this.data.annotationType = AnnotationType.LINK;
+
+    const quadPoints = getQuadPoints(params.dict, this.rectangle);
+    if (quadPoints) {
+      this.data.quadPoints = quadPoints;
+    }
 
     Catalog.parseDestDictionary({
       destDict: params.dict,
@@ -1012,9 +1103,15 @@ class PopupAnnotation extends Annotation {
 
     let parentSubtype = parentItem.get('Subtype');
     this.data.parentType = isName(parentSubtype) ? parentSubtype.name : null;
-    this.data.parentId = dict.getRaw('Parent').toString();
-    this.data.title = stringToPDFString(parentItem.get('T') || '');
-    this.data.contents = stringToPDFString(parentItem.get('Contents') || '');
+    const rawParent = dict.getRaw('Parent');
+    this.data.parentId = isRef(rawParent) ? rawParent.toString() : null;
+
+    const rt = parentItem.get('RT');
+    if (isName(rt, AnnotationReplyType.GROUP)) {
+      // Subordinate annotations in a group should inherit
+      // the group attributes from the primary annotation.
+      parentItem = parentItem.get('IRT');
+    }
 
     if (!parentItem.has('M')) {
       this.data.modificationDate = null;
@@ -1040,6 +1137,9 @@ class PopupAnnotation extends Annotation {
         this.setFlags(parentFlags);
       }
     }
+
+    this.data.title = stringToPDFString(parentItem.get('T') || '');
+    this.data.contents = stringToPDFString(parentItem.get('Contents') || '');
   }
 }
 
@@ -1149,6 +1249,11 @@ class HighlightAnnotation extends MarkupAnnotation {
     super(parameters);
 
     this.data.annotationType = AnnotationType.HIGHLIGHT;
+
+    const quadPoints = getQuadPoints(parameters.dict, this.rectangle);
+    if (quadPoints) {
+      this.data.quadPoints = quadPoints;
+    }
   }
 }
 
@@ -1157,6 +1262,11 @@ class UnderlineAnnotation extends MarkupAnnotation {
     super(parameters);
 
     this.data.annotationType = AnnotationType.UNDERLINE;
+
+    const quadPoints = getQuadPoints(parameters.dict, this.rectangle);
+    if (quadPoints) {
+      this.data.quadPoints = quadPoints;
+    }
   }
 }
 
@@ -1165,6 +1275,11 @@ class SquigglyAnnotation extends MarkupAnnotation {
     super(parameters);
 
     this.data.annotationType = AnnotationType.SQUIGGLY;
+
+    const quadPoints = getQuadPoints(parameters.dict, this.rectangle);
+    if (quadPoints) {
+      this.data.quadPoints = quadPoints;
+    }
   }
 }
 
@@ -1173,6 +1288,11 @@ class StrikeOutAnnotation extends MarkupAnnotation {
     super(parameters);
 
     this.data.annotationType = AnnotationType.STRIKEOUT;
+
+    const quadPoints = getQuadPoints(parameters.dict, this.rectangle);
+    if (quadPoints) {
+      this.data.quadPoints = quadPoints;
+    }
   }
 }
 
@@ -1200,4 +1320,5 @@ export {
   AnnotationBorderStyle,
   AnnotationFactory,
   MarkupAnnotation,
+  getQuadPoints,
 };
